@@ -191,7 +191,7 @@ class Scoreboard:
         screen.blit(final_score_surface, final_score_rect)
         
         # Instructions
-        restart_text = "Press R to restart or ESC to quit"
+        restart_text = "Press R to restart or DELETE to quit"
         restart_surface = self.small_font.render(restart_text, True, config.GRAY)
         restart_rect = restart_surface.get_rect(center=(config.WINDOW_WIDTH // 2, config.WINDOW_HEIGHT // 2 + 50))
         screen.blit(restart_surface, restart_rect)

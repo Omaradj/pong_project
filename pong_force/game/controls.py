@@ -59,7 +59,7 @@ class ControlsMenu:
         
         # Key mapping for display
         self.key_display_names = {
-            "up": "↑", "down": "↓", "left": "←", "right": "→",
+            "up": "UP", "down": "DOWN", "left": "LEFT", "right": "RIGHT",
             "space": "SPACE", "shift": "SHIFT", "w": "W", "a": "A",
             "s": "S", "d": "D", "z": "Z", "x": "X", "c": "C",
             "v": "V", "q": "Q", "e": "E", "r": "R", "f": "F",
@@ -73,25 +73,25 @@ class ControlsMenu:
         
     def load_controls(self):
         """Load controls from file if exists"""
-        controls_file = "controls.json"
+        controls_file = os.path.join(os.path.dirname(__file__), "..", "controls.json")
         if os.path.exists(controls_file):
             try:
                 with open(controls_file, 'r') as f:
                     saved_controls = json.load(f)
                     self.controls.update(saved_controls)
-                    print("✅ Controls loaded from file")
+                    print("Controls loaded from file")
             except Exception as e:
-                print(f"❌ Error loading controls: {e}")
+                print(f"Error loading controls: {e}")
     
     def save_controls(self):
         """Save controls to file"""
-        controls_file = "controls.json"
+        controls_file = os.path.join(os.path.dirname(__file__), "..", "controls.json")
         try:
             with open(controls_file, 'w') as f:
                 json.dump(self.controls, f, indent=2)
-                print("✅ Controls saved to file")
+                print("Controls saved to file")
         except Exception as e:
-            print(f"❌ Error saving controls: {e}")
+            print(f"Error saving controls: {e}")
     
     def run(self):
         """Run controls menu and return when done"""
@@ -151,6 +151,11 @@ class ControlsMenu:
         # Map pygame key to our control name
         key_name = self.pygame_key_to_name(event.key)
         if key_name and key_name in self.available_keys:
+            # Check for conflicts
+            if not self.is_control_allowed(key_name, self.editing_player, self.selected_option):
+                print(f"Control '{key_name}' is already in use or conflicts with existing controls")
+                return
+            
             if self.editing_player == 1:
                 # Player 1 editing (applies to all modes)
                 if self.selected_option == 0:  # Up
@@ -174,6 +179,44 @@ class ControlsMenu:
                     self.controls["player2"]["two_player_local"]["down"] = key_name
                 elif self.selected_option == 2:  # Force
                     self.controls["player2"]["two_player_local"]["force"] = key_name
+    
+    def is_control_allowed(self, key_name, player, control_index):
+        """Check if a control assignment is allowed (no conflicts)"""
+        # Get the control type being edited
+        control_types = ["up", "down", "force"]
+        control_type = control_types[control_index]
+        
+        # Check Player 1 controls (all modes)
+        p1_controls = self.controls["player1"]
+        for mode in ["multiplayer", "vs_robot", "two_player_local"]:
+            if p1_controls[mode][control_type] == key_name:
+                # Allow if editing Player 1 and same control type in same mode
+                if player == 1:
+                    continue
+                else:
+                    return False  # Player 2 cannot use Player 1's controls
+            
+            # Check if key is already used by Player 1 for any other control
+            if player == 2:  # Player 2 cannot use any of Player 1's controls
+                for other_control in ["up", "down", "force"]:
+                    if other_control != control_type and p1_controls[mode][other_control] == key_name:
+                        return False
+        
+        # Check Player 2 controls (only two_player_local mode matters)
+        if player == 1:
+            # Player 1 cannot use Player 2's controls in two_player_local mode
+            p2_controls = self.controls["player2"]["two_player_local"]
+            for other_control in ["up", "down", "force"]:
+                if p2_controls[other_control] == key_name:
+                    return False
+        else:  # player == 2
+            # Player 2 cannot duplicate their own controls
+            p2_controls = self.controls["player2"]["two_player_local"]
+            for other_control in ["up", "down", "force"]:
+                if other_control != control_type and p2_controls[other_control] == key_name:
+                    return False
+        
+        return True
     
     def pygame_key_to_name(self, key):
         """Convert pygame key to our control name"""
@@ -238,7 +281,7 @@ class ControlsMenu:
                 "two_player_local": {"up": "z", "down": "s", "force": "a"}
             }
         }
-        print("✅ Controls reset to defaults")
+        print("Controls reset to defaults")
     
     def get_controls_for_mode(self, player, mode):
         """Get controls for specific player and mode"""
@@ -285,39 +328,84 @@ class ControlsMenu:
         title_rect = title_surface.get_rect(center=(config.WINDOW_WIDTH // 2, 60))
         self.screen.blit(title_surface, title_rect)
         
-        # Show current controls for different modes
-        modes = ["multiplayer", "vs_robot", "two_player_local"]
-        mode_names = ["Multiplayer", "vs Robot", "2-Player Local"]
+        # Show behavior explanation
+        if self.editing_player == 1:
+            behavior_text = "Changes apply to ALL modes (vs Robot, 2-Player, Multiplayer)"
+            behavior_color = config.NEON_BLUE
+        else:
+            behavior_text = "Changes apply ONLY to 2-Player Local mode"
+            behavior_color = config.NEON_PINK
         
-        start_y = 120
+        behavior_surface = self.small_font.render(behavior_text, True, behavior_color)
+        behavior_rect = behavior_surface.get_rect(center=(config.WINDOW_WIDTH // 2, 90))
+        self.screen.blit(behavior_surface, behavior_rect)
+        
+        # Show current controls for different modes
+        if self.editing_player == 1:
+            # Player 1 sees all modes
+            modes = ["multiplayer", "vs_robot", "two_player_local"]
+            mode_names = ["Multiplayer", "vs Robot", "2-Player Local"]
+        else:
+            # Player 2 sees only 2-Player Local mode
+            modes = ["two_player_local"]
+            mode_names = ["2-Player Local"]
+        
+        start_y = 130
         for mode_idx, (mode, mode_name) in enumerate(zip(modes, mode_names)):
             controls = self.controls[f"player{self.editing_player}"][mode]
             
             # Mode name
             mode_surface = self.option_font.render(mode_name + ":", True, self.info_color)
-            mode_rect = mode_surface.get_rect(center=(config.WINDOW_WIDTH // 2, start_y + mode_idx * 120))
+            mode_rect = mode_surface.get_rect(center=(config.WINDOW_WIDTH // 2, start_y + mode_idx * 100))
             self.screen.blit(mode_surface, mode_rect)
             
-            # Controls
+            # Controls with highlighting for selected control
             up_key = self.key_display_names.get(controls["up"], controls["up"].upper())
             down_key = self.key_display_names.get(controls["down"], controls["down"].upper())
             force_key = self.key_display_names.get(controls["force"], controls["force"].upper())
             
+            # Highlight selected control
+            if self.selected_option == 0:  # Up selected
+                up_color = self.selected_color
+                down_color = self.normal_color
+                force_color = self.normal_color
+            elif self.selected_option == 1:  # Down selected
+                up_color = self.normal_color
+                down_color = self.selected_color
+                force_color = self.normal_color
+            else:  # Force selected
+                up_color = self.normal_color
+                down_color = self.normal_color
+                force_color = self.selected_color
+            
+            # Draw controls with different colors
             controls_text = f"Up: {up_key}  Down: {down_key}  Force: {force_key}"
-            controls_surface = self.small_font.render(controls_text, True, self.normal_color)
-            controls_rect = controls_surface.get_rect(center=(config.WINDOW_WIDTH // 2, start_y + 30 + mode_idx * 120))
-            self.screen.blit(controls_surface, controls_rect)
+            
+            # Create separate surfaces for each control to apply different colors
+            up_text_surface = self.small_font.render(f"Up: {up_key}", True, up_color)
+            down_text_surface = self.small_font.render(f"Down: {down_key}", True, down_color)
+            force_text_surface = self.small_font.render(f"Force: {force_key}", True, force_color)
+            
+            # Calculate positions
+            total_width = up_text_surface.get_width() + down_text_surface.get_width() + force_text_surface.get_width() + 40
+            start_x = config.WINDOW_WIDTH // 2 - total_width // 2
+            
+            self.screen.blit(up_text_surface, (start_x, start_y + 30 + mode_idx * 100))
+            self.screen.blit(down_text_surface, (start_x + up_text_surface.get_width() + 20, start_y + 30 + mode_idx * 100))
+            self.screen.blit(force_text_surface, (start_x + up_text_surface.get_width() + down_text_surface.get_width() + 40, start_y + 30 + mode_idx * 100))
         
-        # Instructions
+        # Instructions with conflict warning
         instructions = [
-            "Use +/- to select control to change",
+            "Use LEFT/RIGHT to select control to change",
             "Press any key to assign to selected control",
+            "Controls cannot be duplicated between players",
             "Press ESC to finish editing"
         ]
         
-        inst_y = config.WINDOW_HEIGHT - 120
-        for instruction in instructions:
-            inst_surface = self.small_font.render(instruction, True, config.GRAY)
+        inst_y = config.WINDOW_HEIGHT - 140
+        for i, instruction in enumerate(instructions):
+            color = config.NEON_PINK if i == 2 else config.GRAY  # Highlight conflict warning
+            inst_surface = self.small_font.render(instruction, True, color)
             inst_rect = inst_surface.get_rect(center=(config.WINDOW_WIDTH // 2, inst_y))
             self.screen.blit(inst_surface, inst_rect)
-            inst_y += 25
+            inst_y += 30

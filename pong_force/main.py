@@ -187,7 +187,7 @@ import argparse
 import pygame
 import traceback
 from game.game_loop import GameLoop
-from game.menu import GameMenu, HostInputDialog, OnlineSubmenu, ErrorDialog
+from game.menu import GameMenu, HostInputDialog, OnlineSubmenu, ErrorDialog, GoalSelectionMenu
 from network.server import GameServer
 from network.client import GameClient
 import config
@@ -226,8 +226,15 @@ def main_game():
                 menu = GameMenu()
                 choice = menu.run()
                 if choice == 0:
-                    game = GameLoop()
-                    game.run_vs_ai()
+                    # Show goal selection menu for vs AI mode
+                    goal_menu = GoalSelectionMenu()
+                    win_score = goal_menu.run()
+                    
+                    if win_score > 0:  # User didn't cancel
+                        game = GameLoop()
+                        game.run_vs_ai_with_goals(win_score)
+                    else:
+                        print("👋 Returning to main menu...")
                 elif choice == 1:
                     submenu = OnlineSubmenu()
                     online_choice = submenu.run()

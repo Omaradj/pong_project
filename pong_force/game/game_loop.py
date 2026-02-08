@@ -3,6 +3,7 @@
 import pygame
 import sys
 import time
+import os
 from .paddle import Paddle
 from .ball import Ball
 from .power import ForcePush
@@ -117,6 +118,16 @@ class GameLoop:
         """Run game against AI"""
         print("🤖 Starting game vs AI...")
         self.ai_enabled = True
+        self.load_custom_controls()
+        self.game_state = config.STATE_PLAYING
+        self.main_loop()
+    
+    def run_vs_ai_with_goals(self, win_score):
+        """Run game against AI with custom win score"""
+        print("Starting game vs AI - First to {win_score} wins!")
+        self.ai_enabled = True
+        self.custom_win_score = win_score
+        self.load_custom_controls()
         self.game_state = config.STATE_PLAYING
         self.main_loop()
     
@@ -127,9 +138,9 @@ class GameLoop:
             if os.path.exists("controls.json"):
                 with open("controls.json", 'r') as f:
                     self.custom_controls = json.load(f)
-                    print("✅ Custom controls loaded")
+                    print("Custom controls loaded")
         except Exception as e:
-            print(f"❌ Error loading custom controls: {e}")
+            print(f"Error loading custom controls: {e}")
     
     def get_control_key(self, player, action):
         """Get pygame key for player action based on game mode"""
@@ -269,9 +280,9 @@ class GameLoop:
                         self.ball.y + self.ball.size // 2,
                         1
                     )
-                    print("   ✅ Effet visuel créé")
+                    print("   Effet visuel cree")
             else:
-                print(f"   ❌ État pas OK pour Force Push")
+                print(f"   Etat pas OK pour Force Push")
         
         # Check for custom force push keys
         p1_force_key = self.get_control_key(1, "force")
