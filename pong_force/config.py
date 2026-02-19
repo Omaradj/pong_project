@@ -14,6 +14,7 @@ WHITE = (255, 255, 255)       # Text
 NEON_BLUE = (0, 255, 255)     # Player 1, UI elements
 NEON_PINK = (255, 0, 204)     # Player 2, Force effects
 NEON_YELLOW = (255, 215, 0)   # Ball, highlights
+NEON_GREEN = (0, 255, 128)     # Success indicators, positive stats
 GRAY = (128, 128, 128)        # Secondary text
 DARK_GRAY = (64, 64, 64)      # Borders
 
