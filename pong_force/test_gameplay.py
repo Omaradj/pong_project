@@ -1,7 +1,18 @@
 # test_gameplay.py - Enhanced test suite for Pong Force
-import pygame
+# -*- coding: utf-8 -*-
 import sys
 import os
+import io
+
+# Configure UTF-8 encoding for Windows console
+if sys.platform == 'win32':
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    except:
+        pass  # Fallback if encoding setup fails
+
+import pygame
 import time
 
 # Add the current directory to Python path
