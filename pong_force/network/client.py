@@ -419,7 +419,7 @@ class GameClient:
                 self.handle_key_release(event.key)
     
     def handle_key_press(self, key):
-        """Handle key press
+        """Handle key press using custom controls
         
         Args:
             key (int): Pygame key constant
@@ -427,25 +427,26 @@ class GameClient:
         if not self.connected or not self.game_loop:
             return
         
-        # Map keys to input
-        input_mapping = {
-            pygame.K_UP: 'up',
-            pygame.K_DOWN: 'down',
-            pygame.K_w: 'up',
-            pygame.K_s: 'down',
-            pygame.K_SPACE: 'force_push',
-            pygame.K_LSHIFT: 'force_push',
-            pygame.K_RSHIFT: 'force_push',
-            pygame.K_ESCAPE: 'pause',
-            pygame.K_r: 'restart'
-        }
+        # Use custom controls for player 2 (client)
+        # Client is always player 2 in multiplayer
+        p2_up_key = self.game_loop.get_control_key(2, "up")
+        p2_down_key = self.game_loop.get_control_key(2, "down")
+        p2_force_key = self.game_loop.get_control_key(2, "force")
         
-        if key in input_mapping:
-            input_type = input_mapping[key]
-            self.queue_input(input_type)
+        # Map keys to input based on custom controls
+        if key == p2_up_key:
+            self.queue_input('up')
+        elif key == p2_down_key:
+            self.queue_input('down')
+        elif key == p2_force_key:
+            self.queue_input('force_push')
+        elif key == pygame.K_ESCAPE:
+            self.queue_input('pause')
+        elif key == pygame.K_r:
+            self.queue_input('restart')
     
     def handle_key_release(self, key):
-        """Handle key release
+        """Handle key release using custom controls
         
         Args:
             key (int): Pygame key constant
@@ -453,8 +454,12 @@ class GameClient:
         if not self.connected or not self.game_loop:
             return
         
-        # Handle stop input for movement keys
-        if key in [pygame.K_UP, pygame.K_DOWN, pygame.K_w, pygame.K_s]:
+        # Use custom controls for player 2 (client)
+        p2_up_key = self.game_loop.get_control_key(2, "up")
+        p2_down_key = self.game_loop.get_control_key(2, "down")
+        
+        # Handle stop input for movement keys based on custom controls
+        if key == p2_up_key or key == p2_down_key:
             self.queue_input('stop')
     
     def queue_input(self, input_type):
@@ -694,6 +699,9 @@ class GameClient:
             self.game_loop = GameLoop()
             self.game_loop.is_client = True
             self.game_loop.game_state = config.STATE_CONNECTING
+            
+            # Load custom controls for client (player 2)
+            self.game_loop.load_custom_controls()
 
             # Start network thread
             network_thread = threading.Thread(target=self.network_loop, daemon=True)

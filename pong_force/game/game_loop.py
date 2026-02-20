@@ -697,7 +697,7 @@ class GameLoop:
 
         """Update input handling with custom controls"""
 
-        # Player 1 controls (customizable)
+        # Player 1 controls (customizable) - Host controls paddle1
 
         p1_up_key = self.get_control_key(1, "up")
 
@@ -723,7 +723,15 @@ class GameLoop:
 
         # Player 2 controls (depends on mode)
 
-        if self.ai_enabled:
+        if self.is_server:
+
+            # In server mode, player 2 is controlled by client via network
+
+            # Don't process keyboard input for paddle2 - it's controlled by network
+
+            pass
+
+        elif self.ai_enabled:
 
             # AI controls player 2
 
@@ -731,7 +739,7 @@ class GameLoop:
 
         else:
 
-            # Human player 2 controls (customizable)
+            # Human player 2 controls (customizable) - for local 2-player or client mode
 
             p2_up_key = self.get_control_key(2, "up")
 

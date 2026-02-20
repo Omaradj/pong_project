@@ -56,7 +56,7 @@ class GameServer:
         self.game_thread = None
 
         # Network settings
-        self.max_clients = 2
+        self.max_clients = 1  # Only 1 client needed (host is player 1, client is player 2)
         self.buffer_size = config.BUFFER_SIZE
         self.update_rate = config.NETWORK_UPDATE_RATE
 
@@ -255,6 +255,9 @@ class GameServer:
         self.game_loop.is_server = True
         self.game_loop.game_state = config.STATE_WAITING
         
+        # Load custom controls for host (player 1)
+        self.game_loop.load_custom_controls()
+        
         # Set custom win score
         self.game_loop.custom_win_score = self.win_score
         if hasattr(self.game_loop, 'scoreboard'):
@@ -400,14 +403,10 @@ class GameServer:
         if not self.game_loop or self.game_loop.game_state != config.STATE_PLAYING:
             return
         
-        # Apply input to appropriate paddle
-        player_id = client.player_id
+        # Client is always player 2 (host is player 1)
+        # Apply input to paddle2
+        paddle = self.game_loop.paddle2
         input_type = data.get('input')
-        
-        if player_id == 1:
-            paddle = self.game_loop.paddle1
-        else:
-            paddle = self.game_loop.paddle2
         
         # Handle input
         if input_type == 'up':
@@ -427,12 +426,8 @@ class GameServer:
         if not self.game_loop or self.game_loop.game_state != config.STATE_PLAYING:
             return
         
-        player_id = client.player_id
-        
-        if player_id == 1:
-            paddle = self.game_loop.paddle1
-        else:
-            paddle = self.game_loop.paddle2
+        # Client is always player 2 (host is player 1)
+        paddle = self.game_loop.paddle2
         
         # Try force push
         if paddle.try_force_push(self.game_loop.ball):
@@ -440,7 +435,7 @@ class GameServer:
             self.game_loop.effects.create_force_effect(
                 self.game_loop.ball.x + self.game_loop.ball.size // 2,
                 self.game_loop.ball.y + self.game_loop.ball.size // 2,
-                player_id
+                2  # Player 2 (client)
             )
     
     def handle_pause(self, client, data):
@@ -651,7 +646,8 @@ class ClientHandler:
         self.socket = socket
         self.address = address
         self.server = server
-        self.player_id = len(server.clients) + 1
+        # Host is player 1, first client is player 2
+        self.player_id = 2  # Client is always player 2 (host is player 1)
         self.running = True
     
     def run(self):
