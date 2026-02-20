@@ -37,10 +37,15 @@ users_lock = Lock()
 active_rooms = {}
 user_database = []
 
+# Système de relais pour les données de jeu (évite les problèmes de NAT/firewall)
+relay_data = {}  # {room_code: {"game_state": {...}, "inputs": [...]}}
+relay_lock = Lock()
+
 # Configuration
 ROOM_TIMEOUT = 600  # 10 minutes d'inactivité max
 MAX_ROOMS = 1000
 MAX_PLAYERS_PER_ROOM = 2
+RELAY_CLEANUP_INTERVAL = 60  # Nettoyer les données de relais toutes les 60 secondes
 
 
 class UserTracker:
@@ -491,10 +496,162 @@ def close_room():
             }), 400
 
         result = room_manager.close_room(room_code)
+        
+        # Nettoyer les données de relais pour cette room
+        with relay_lock:
+            if room_code in relay_data:
+                del relay_data[room_code]
+        
         return jsonify(result)
 
     except Exception as e:
         logger.error(f"Close room error: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# ================ RELAY SYSTEM (pour contourner NAT/firewall) ================
+
+@app.route('/api/relay/game_state', methods=['POST'])
+def relay_game_state():
+    """Le serveur de jeu envoie l'état du jeu au relais"""
+    try:
+        data = request.get_json()
+        room_code = data.get('room_code')
+        game_state = data.get('game_state')
+
+        if not room_code or game_state is None:
+            return jsonify({
+                "success": False,
+                "error": "Missing room_code or game_state"
+            }), 400
+
+        # Vérifier que la room existe
+        with rooms_lock:
+            if room_code not in active_rooms:
+                return jsonify({
+                    "success": False,
+                    "error": "Room not found"
+                }), 404
+
+        # Stocker l'état du jeu dans le relais
+        with relay_lock:
+            if room_code not in relay_data:
+                relay_data[room_code] = {"game_state": None, "inputs": []}
+            relay_data[room_code]["game_state"] = game_state
+            relay_data[room_code]["last_update"] = time.time()
+
+        return jsonify({"success": True}), 200
+
+    except Exception as e:
+        logger.error(f"Relay game state error: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/relay/game_state/<room_code>', methods=['GET'])
+def get_relay_game_state(room_code):
+    """Le client récupère l'état du jeu depuis le relais"""
+    try:
+        with relay_lock:
+            if room_code not in relay_data:
+                return jsonify({
+                    "success": False,
+                    "game_state": None,
+                    "error": "No game state available"
+                }), 404
+
+            game_state = relay_data[room_code].get("game_state")
+            if game_state is None:
+                return jsonify({
+                    "success": False,
+                    "game_state": None,
+                    "error": "Game state not ready"
+                }), 404
+
+            return jsonify({
+                "success": True,
+                "game_state": game_state
+            }), 200
+
+    except Exception as e:
+        logger.error(f"Get relay game state error: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/relay/input', methods=['POST'])
+def relay_input():
+    """Le client envoie ses inputs au relais"""
+    try:
+        data = request.get_json()
+        room_code = data.get('room_code')
+        input_data = data.get('input')
+
+        if not room_code or input_data is None:
+            return jsonify({
+                "success": False,
+                "error": "Missing room_code or input"
+            }), 400
+
+        # Vérifier que la room existe
+        with rooms_lock:
+            if room_code not in active_rooms:
+                return jsonify({
+                    "success": False,
+                    "error": "Room not found"
+                }), 404
+
+        # Ajouter l'input à la queue
+        with relay_lock:
+            if room_code not in relay_data:
+                relay_data[room_code] = {"game_state": None, "inputs": []}
+            relay_data[room_code]["inputs"].append({
+                "data": input_data,
+                "timestamp": time.time()
+            })
+            # Limiter la taille de la queue (garder seulement les 10 derniers)
+            if len(relay_data[room_code]["inputs"]) > 10:
+                relay_data[room_code]["inputs"] = relay_data[room_code]["inputs"][-10:]
+
+        return jsonify({"success": True}), 200
+
+    except Exception as e:
+        logger.error(f"Relay input error: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/relay/input/<room_code>', methods=['GET'])
+def get_relay_inputs(room_code):
+    """Le serveur de jeu récupère les inputs depuis le relais"""
+    try:
+        with relay_lock:
+            if room_code not in relay_data:
+                return jsonify({
+                    "success": True,
+                    "inputs": []
+                }), 200
+
+            inputs = relay_data[room_code].get("inputs", [])
+            # Retourner les inputs et les vider
+            relay_data[room_code]["inputs"] = []
+
+            return jsonify({
+                "success": True,
+                "inputs": [inp["data"] for inp in inputs]
+            }), 200
+
+    except Exception as e:
+        logger.error(f"Get relay inputs error: {e}")
         return jsonify({
             "success": False,
             "error": str(e)
@@ -568,9 +725,35 @@ def cleanup_task():
             logger.error(f"Cleanup task error: {e}")
 
 
-# Lance le thread de nettoyage
+def cleanup_relay_data():
+    """Nettoie les données de relais pour les rooms inactives"""
+    while True:
+        try:
+            time.sleep(RELAY_CLEANUP_INTERVAL)
+            current_time = time.time()
+            
+            with relay_lock:
+                rooms_to_remove = []
+                for room_code, data in relay_data.items():
+                    last_update = data.get("last_update", 0)
+                    # Supprimer les données de relais si pas de mise à jour depuis 5 minutes
+                    if current_time - last_update > 300:
+                        rooms_to_remove.append(room_code)
+                
+                for room_code in rooms_to_remove:
+                    del relay_data[room_code]
+                    logger.info(f"Cleaned up relay data for room {room_code}")
+        
+        except Exception as e:
+            logger.error(f"Error in relay cleanup: {e}")
+
+
+# Lance les threads de nettoyage
 cleanup_thread = Thread(target=cleanup_task, daemon=True)
 cleanup_thread.start()
+
+relay_cleanup_thread = Thread(target=cleanup_relay_data, daemon=True)
+relay_cleanup_thread.start()
 
 
 # ================ DÉMARRAGE ================

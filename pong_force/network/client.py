@@ -287,8 +287,16 @@ class GameClient:
             return True
 
         except socket.timeout:
-            error_msg = f"Connection timeout: Server at {self.host}:{self.port} did not respond.\n\nPlease check:\n- Server is running\n- IP address is correct\n- Firewall allows connection"
-            logger.error(error_msg)
+            error_msg = (
+                f"Connection timeout: Server at {self.host}:{self.port} did not respond.\n\n"
+                "This usually means the host's port is not accessible from the Internet.\n\n"
+                "The host needs to:\n"
+                "1. Open port {port} in Windows Firewall\n"
+                "2. Configure port forwarding on their router (port {port} → host's local IP)\n"
+                "3. Make sure the server is running and waiting for connections\n\n"
+                "Ask the host to check their firewall and router settings."
+            ).format(port=self.port)
+            logger.error(f"Connection timeout: {self.host}:{self.port}")
             print(f"❌ {error_msg}")
             self.show_error_dialog("Connection Timeout", error_msg)
             self.connection_errors.append(error_msg)
@@ -336,7 +344,40 @@ class GameClient:
         self.run_game_loop()
     
     def network_loop(self):
-        """Network communication loop"""
+        """Network communication loop - utilise le relais si room_code disponible"""
+        if self.room_code:
+            # Mode relais : poller le matchmaking server
+            self.relay_loop()
+        else:
+            # Mode direct : connexion socket classique
+            self.direct_network_loop()
+    
+    def relay_loop(self):
+        """Boucle de communication via le relais (matchmaking server)"""
+        import time
+        last_poll_time = 0
+        poll_interval = 1.0 / config.NETWORK_UPDATE_RATE  # 60 fois par seconde
+        
+        while self.running:
+            try:
+                current_time = time.time()
+                
+                # Poller l'état du jeu depuis le relais
+                if current_time - last_poll_time >= poll_interval:
+                    self.poll_relay_game_state()
+                    last_poll_time = current_time
+                
+                time.sleep(0.01)  # Petit sleep pour éviter de surcharger le CPU
+                
+            except Exception as e:
+                if self.running:
+                    logger.error(f"Relay loop error: {e}")
+                break
+        
+        self.disconnect()
+    
+    def direct_network_loop(self):
+        """Boucle de communication directe (socket)"""
         while self.running and self.connected:
             try:
                 # Set timeout to allow checking self.running periodically
@@ -377,6 +418,42 @@ class GameClient:
                 break
         
         self.disconnect()
+    
+    def poll_relay_game_state(self):
+        """Récupère l'état du jeu depuis le relais"""
+        if not self.room_code or not self.game_loop:
+            return
+        
+        try:
+            url = f"{config.MATCHMAKING_SERVER_URL}/api/relay/game_state/{self.room_code}"
+            response = requests.get(url, timeout=1)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("success"):
+                    game_state = result.get("game_state")
+                    if game_state:
+                        self.handle_game_state(game_state)
+            elif response.status_code == 404:
+                # Pas encore d'état disponible, c'est normal au début
+                pass
+        except Exception as e:
+            logger.debug(f"Failed to poll relay game state: {e}")
+    
+    def send_input_to_relay(self, input_data):
+        """Envoie un input au relais"""
+        if not self.room_code:
+            return
+        
+        try:
+            url = f"{config.MATCHMAKING_SERVER_URL}/api/relay/input"
+            payload = {
+                "room_code": self.room_code,
+                "input": input_data
+            }
+            requests.post(url, json=payload, timeout=1)
+        except Exception as e:
+            logger.debug(f"Failed to send input to relay: {e}")
     
     def input_loop(self):
         """Input handling loop"""
@@ -486,11 +563,31 @@ class GameClient:
             self.input_queue.append(input_type)
     
     def send_input(self, input_type):
-        """Send input to server
+        """Send input to server (via relay if room_code available, else direct)
         
         Args:
             input_type (str): Type of input
         """
+        # Si on utilise le relais, envoyer au relais
+        if self.room_code:
+            input_data = {
+                'type': input_type,
+                'player_id': self.player_id
+            }
+            # Construire le message selon le type d'input
+            if input_type == 'force_push':
+                input_data['message_type'] = config.MSG_FORCE_PUSH
+            elif input_type == 'pause':
+                input_data['message_type'] = config.MSG_PAUSE
+            elif input_type == 'restart':
+                input_data['message_type'] = config.MSG_RESTART
+            else:
+                input_data['message_type'] = config.MSG_INPUT
+            
+            self.send_input_to_relay(input_data)
+            return
+        
+        # Sinon, utiliser la connexion directe
         if not self.connected:
             return
         

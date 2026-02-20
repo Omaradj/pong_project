@@ -224,6 +224,13 @@ class GameServer:
                 print(f"🏠 Local IP: {self.local_ip}:{self.port}")
                 print(f"🔑 MAC: {self.mac_address}")
                 print(f"\n💡 Share room code '{self.room_code}' with your opponent!")
+                print(f"\n⚠️  IMPORTANT: For Internet play, you need to:")
+                print(f"   1. Open port {self.port} in Windows Firewall")
+                print(f"   2. Configure port forwarding on your router:")
+                print(f"      - External Port: {self.port}")
+                print(f"      - Internal IP: {self.local_ip}")
+                print(f"      - Internal Port: {self.port}")
+                print(f"   3. Protocol: TCP")
             else:
                 print(f"📍 Listening on {self.host}:{self.port}")
                 print(f"🌐 Share your PUBLIC IP with other players")
@@ -479,18 +486,62 @@ class GameServer:
                 self.clients.remove(client)
     
     def broadcast_game_state(self):
-        """Broadcast current game state to all clients"""
+        """Broadcast current game state to all clients via relay"""
         if not self.game_loop:
             return
         
         game_state = self.game_loop.get_game_state()
         
+        # Si on a un room_code, utiliser le relais (matchmaking server)
+        if self.room_code:
+            try:
+                url = f"{config.MATCHMAKING_SERVER_URL}/api/relay/game_state"
+                payload = {
+                    "room_code": self.room_code,
+                    "game_state": game_state
+                }
+                requests.post(url, json=payload, timeout=2)
+            except Exception as e:
+                logger.warning(f"Failed to send game state to relay: {e}")
+        
+        # Aussi broadcaster directement aux clients connectés (fallback)
         message = {
             'type': 'game_state',
             'data': game_state
         }
-        
         self.broadcast_message(message)
+    
+    def poll_relay_inputs(self):
+        """Récupère les inputs depuis le relais"""
+        if not self.room_code:
+            return
+        
+        try:
+            url = f"{config.MATCHMAKING_SERVER_URL}/api/relay/input/{self.room_code}"
+            response = requests.get(url, timeout=1)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("success"):
+                    inputs = result.get("inputs", [])
+                    for input_data in inputs:
+                        # Traiter chaque input comme s'il venait d'un client
+                        self.handle_input_from_relay(input_data)
+        except Exception as e:
+            logger.debug(f"Failed to poll relay inputs: {e}")
+    
+    def handle_input_from_relay(self, input_data):
+        """Traite un input reçu depuis le relais"""
+        # Simuler un message comme s'il venait d'un client
+        if self.clients:
+            # Utiliser le premier client (il n'y en a qu'un)
+            client = self.clients[0]
+            message_type = input_data.get('type')
+            
+            if message_type == 'input':
+                self.handle_input(client, input_data.get('data', {}))
+            elif message_type == 'force_push':
+                self.handle_force_push(client, input_data.get('data', {}))
     
     def stop(self):
         """Stop the server"""
