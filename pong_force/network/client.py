@@ -260,31 +260,40 @@ class GameClient:
             )
             return False
 
-    def connect(self):
-        """Connect to server with timeout and detailed error messages"""
-        try:
-            logger.info(f"Connecting to {self.host}:{self.port}...")
-            print(f"🔗 Attempting to connect to {self.host}:{self.port}...")
+     def connect(self):
+         """Connect to server with timeout and detailed error messages"""
+         # Si on utilise le relais (room_code), pas besoin de connexion socket
+         if self.room_code:
+             logger.info(f"Using relay mode (room: {self.room_code}) - no direct connection needed")
+             print(f"🔗 Using relay mode via matchmaking server - no port forwarding needed!")
+             self.connected = True
+             self.running = True
+             return True
+         
+         # Sinon, connexion socket classique (pour connexion directe sans matchmaking)
+         try:
+             logger.info(f"Connecting to {self.host}:{self.port}...")
+             print(f"🔗 Attempting to connect to {self.host}:{self.port}...")
 
-            # Create socket
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+             # Create socket
+             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-            # Set connection timeout (10 seconds)
-            self.socket.settimeout(10.0)
+             # Set connection timeout (10 seconds)
+             self.socket.settimeout(10.0)
 
-            # Try to connect
-            self.socket.connect((self.host, self.port))
+             # Try to connect
+             self.socket.connect((self.host, self.port))
 
-            # Connection successful - remove timeout for normal operation
-            self.socket.settimeout(None)
+             # Connection successful - remove timeout for normal operation
+             self.socket.settimeout(None)
 
-            self.connected = True
-            self.running = True
+             self.connected = True
+             self.running = True
 
-            logger.info(f"✅ Connected to server at {self.host}:{self.port}")
-            print(f"✅ Connected to server at {self.host}:{self.port}")
+             logger.info(f"✅ Connected to server at {self.host}:{self.port}")
+             print(f"✅ Connected to server at {self.host}:{self.port}")
 
-            return True
+             return True
 
         except socket.timeout:
             error_msg = (
@@ -786,24 +795,33 @@ class GameClient:
                 logger.error("Connection test failed")
                 return False
 
-            # Si on utilise un room code, rejoint via matchmaking
-            if self.room_code:
-                if not self.join_room_via_matchmaking():
-                    logger.error("Failed to join room via matchmaking")
-                    return False
-
-            # Vérifie qu'on a bien un host
-            if not self.host:
-                error_msg = "No server address available"
-                logger.error(error_msg)
-                self.show_error_dialog("No Server", error_msg)
-                return False
-
-            # Connect to server
-            if not self.connect():
-                logger.error("Failed to connect to server")
-                # Connection failed - error dialog will be shown by main.py
-                return False
+             # Si on utilise un room code, rejoint via matchmaking et utilise le relais
+             if self.room_code:
+                 if not self.join_room_via_matchmaking():
+                     logger.error("Failed to join room via matchmaking")
+                     return False
+                 
+                 # Avec le relais, pas besoin de connexion socket - on utilise le matchmaking server
+                 # On peut mettre des valeurs par défaut pour éviter les erreurs
+                 if not self.host:
+                     self.host = "relay"  # Valeur factice, pas utilisée en mode relais
+                 
+                 # Connect au relais (pas de socket nécessaire)
+                 if not self.connect():
+                     logger.error("Failed to connect to relay")
+                     return False
+             else:
+                 # Mode direct : vérifie qu'on a bien un host et connexion socket
+                 if not self.host:
+                     error_msg = "No server address available"
+                     logger.error(error_msg)
+                     self.show_error_dialog("No Server", error_msg)
+                     return False
+                 
+                 # Connect to server via socket
+                 if not self.connect():
+                     logger.error("Failed to connect to server")
+                     return False
 
             # Initialize game loop with existing screen
             self.game_loop = GameLoop()

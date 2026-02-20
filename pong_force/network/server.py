@@ -532,16 +532,27 @@ class GameServer:
     
     def handle_input_from_relay(self, input_data):
         """Traite un input reçu depuis le relais"""
-        # Simuler un message comme s'il venait d'un client
-        if self.clients:
-            # Utiliser le premier client (il n'y en a qu'un)
-            client = self.clients[0]
-            message_type = input_data.get('type')
-            
-            if message_type == 'input':
-                self.handle_input(client, input_data.get('data', {}))
-            elif message_type == 'force_push':
-                self.handle_force_push(client, input_data.get('data', {}))
+        # Créer un client handler virtuel pour traiter les inputs
+        # (on n'a pas besoin d'un vrai client socket si on utilise le relais)
+        message_type = input_data.get('message_type') or input_data.get('type')
+        input_type = input_data.get('type')
+        
+        # Créer un objet client virtuel
+        class VirtualClient:
+            def __init__(self):
+                self.address = ("relay", 0)
+        
+        virtual_client = VirtualClient()
+        
+        if message_type == config.MSG_INPUT or input_type in ['up', 'down', 'stop']:
+            data = {'input': input_type}
+            self.handle_input(virtual_client, data)
+        elif message_type == config.MSG_FORCE_PUSH or input_type == 'force_push':
+            self.handle_force_push(virtual_client, {})
+        elif message_type == config.MSG_PAUSE or input_type == 'pause':
+            self.handle_pause(virtual_client, {})
+        elif message_type == config.MSG_RESTART or input_type == 'restart':
+            self.handle_restart(virtual_client, {})
     
     def stop(self):
         """Stop the server"""
