@@ -170,14 +170,27 @@ class GameClient:
             if response.status_code == 200:
                 result = response.json()
                 if result.get("success"):
-                    # Obtient l'IP de l'hôte
-                    self.host = result.get("host_ip")
-                    self.port = result.get("host_port", config.SERVER_PORT)
+                    # Utilise l'IP publique pour se connecter (nécessaire pour les connexions Internet)
+                    # L'IP privée ne fonctionne que si les deux joueurs sont sur le même réseau local
                     public_ip = result.get("public_ip")
-
-                    # Si l'IP locale ne fonctionne pas, essayer l'IP publique
-                    if not self.host and public_ip:
+                    host_ip = result.get("host_ip")  # IP privée (pour référence)
+                    self.port = result.get("host_port", config.SERVER_PORT)
+                    
+                    # Priorité à l'IP publique pour les connexions Internet
+                    if public_ip:
                         self.host = public_ip
+                        logger.info(f"Using public IP: {public_ip}")
+                    elif host_ip:
+                        # Fallback sur IP privée si pas d'IP publique (même réseau local)
+                        self.host = host_ip
+                        logger.info(f"Using private IP (same network): {host_ip}")
+                    else:
+                        logger.error("No IP address available from matchmaking server")
+                        self.show_error_dialog(
+                            "Connection Error",
+                            "Cannot get host IP address from matchmaking server."
+                        )
+                        return False
 
                     # Mettre à jour le nom du joueur si le serveur l'a modifié
                     final_name = result.get("player_name")
@@ -186,7 +199,7 @@ class GameClient:
                         self.player_name = final_name
 
                     logger.info(f"✅ Room found!")
-                    logger.info(f"📍 Host IP: {self.host}:{self.port}")
+                    logger.info(f"📍 Host IP: {self.host}:{self.port} (public: {public_ip}, private: {host_ip})")
                     logger.info(f"👥 Players: {result.get('players', [])}")
 
                     print(f"✅ Room found!")

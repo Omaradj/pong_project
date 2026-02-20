@@ -94,12 +94,15 @@ class GameServer:
                 return False
 
             # Prépare les données
+            # Envoie l'IP publique ET l'IP locale
+            # Le matchmaking server utilisera l'IP publique pour les connexions Internet
             payload = {
                 "room_code": self.room_code,
                 "player_name": self.player_name,
                 "mac_address": self.mac_address,
-                "host_ip": self.local_ip,
-                "host_port": self.port
+                "host_ip": self.local_ip,  # IP privée (pour référence, si même réseau local)
+                "host_port": self.port,
+                "public_ip": self.public_ip  # IP publique (pour connexions Internet)
             }
 
             # Envoie la requête au serveur matchmaking

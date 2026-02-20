@@ -372,6 +372,7 @@ def create_room():
         mac_address = data.get('mac_address')
         host_ip = data.get('host_ip')  # IP locale pour la connexion
         host_port = data.get('host_port', 5555)
+        public_ip_from_client = data.get('public_ip')  # IP publique envoyée par le client
 
         # Validation
         if not room_code or not player_name:
@@ -381,14 +382,22 @@ def create_room():
             }), 400
 
         # Track l'utilisateur
-        public_ip = user_tracker.get_public_ip(request)
+        public_ip_from_request = user_tracker.get_public_ip(request)
         user_tracker.track_user(player_name, request, mac_address)
+
+        # Utilise l'IP publique envoyée par le client, sinon celle de la requête
+        # L'IP publique du client est plus fiable car obtenue via un service externe
+        public_ip = public_ip_from_client or public_ip_from_request
+
+        if not public_ip:
+            logger.warning(f"No public IP available for room {room_code}, using request IP")
+            public_ip = public_ip_from_request or "Unknown"
 
         # Crée la room
         host_info = {
-            "ip": host_ip,
+            "ip": host_ip,  # IP privée (pour référence, si même réseau local)
             "port": host_port,
-            "public_ip": public_ip
+            "public_ip": public_ip  # IP publique (pour connexions Internet)
         }
 
         result = room_manager.create_room(room_code, player_name, host_info)
