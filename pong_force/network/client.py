@@ -7,91 +7,302 @@ import time
 import sys
 import os
 import pygame
+import requests
+import logging
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from game.game_loop import GameLoop
 import config
+from network.network_utils import NetworkUtils, ConnectionTester
+
+# Configuration du logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [CLIENT] - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 class GameClient:
-    def __init__(self, host, port):
+    def __init__(self, host=None, port=None, room_code=None, player_name=None):
         """Initialize the game client
-        
+
         Args:
-            host (str): Server host address
-            port (int): Server port
+            host (str): Server host address (optional if using room_code)
+            port (int): Server port (optional if using room_code)
+            room_code (str): Room code for matchmaking
+            player_name (str): Player name
         """
         self.host = host
-        self.port = port
+        self.port = port or config.SERVER_PORT
         self.socket = None
         self.running = False
         self.connected = False
-        
+
+        # Room information
+        self.room_code = room_code
+        self.player_name = player_name or "Player"
+
+        # Network info
+        self.local_ip = NetworkUtils.get_local_ip()
+        self.public_ip = None
+        self.mac_address = NetworkUtils.get_mac_address()
+
         # Game state
         self.game_loop = None
         self.player_id = None
-        
+
         # Network settings
         self.buffer_size = config.BUFFER_SIZE
-        
+
         # Input handling
         self.input_queue = []
         self.last_input_time = 0
         self.input_throttle = 1.0 / 60  # Send input 60 times per second max
-        
+
         # Error handling
         self.error_message = None
         self.error_title = None
-        
+        self.connection_errors = []
+
+        # Connection test results
+        self.connection_test_results = None
+
         # Clock for FPS limiting
         self.clock = pygame.time.Clock()
+
+        logger.info(f"Client initialized - Room: {room_code}, Player: {player_name}")
     
+    def test_connection(self):
+        """Teste la connexion avant de se connecter au serveur"""
+        logger.info("Running connection tests...")
+        print(f"\n{'='*60}")
+        print("🔍 TESTING CONNECTION...")
+        print(f"{'='*60}\n")
+
+        # Skip full test for faster connection - just check matchmaking server
+        try:
+            print("Testing matchmaking server connection...")
+            response = requests.get(f"{config.MATCHMAKING_SERVER_URL}/health", timeout=10)
+            if response.status_code == 200:
+                print("✅ Matchmaking server is online")
+                return True
+            else:
+                print(f"❌ Matchmaking server error: {response.status_code}")
+                self.show_error_dialog(
+                    "Server Error",
+                    f"Matchmaking server returned error: {response.status_code}"
+                )
+                return False
+        except requests.exceptions.ConnectionError:
+            print("❌ Cannot reach matchmaking server")
+            self.show_error_dialog(
+                "Connection Error",
+                "Cannot connect to matchmaking server.\n\nThe server may be:\n- Not running\n- Not accessible from your network\n\nMake sure the matchmaking server is running and accessible."
+            )
+            return False
+        except requests.exceptions.Timeout:
+            print("❌ Matchmaking server timeout")
+            self.show_error_dialog(
+                "Connection Timeout",
+                "Matchmaking server did not respond.\n\nPlease check your internet connection."
+            )
+            return False
+        except Exception as e:
+            print(f"❌ Connection test error: {e}")
+            self.show_error_dialog(
+                "Connection Error",
+                f"Connection test failed:\n\n{str(e)}"
+            )
+            return False
+
+    def join_room_via_matchmaking(self):
+        """Rejoint une room via le serveur de matchmaking"""
+        if not self.room_code:
+            logger.error("No room code provided")
+            self.show_error_dialog(
+                "No Room Code",
+                "Please enter a room code to join a game."
+            )
+            return False
+
+        try:
+            logger.info(f"Joining room {self.room_code} via matchmaking...")
+            print(f"\n🔍 Looking for room '{self.room_code}'...")
+
+            # First, check if room exists
+            check_url = f"{config.MATCHMAKING_SERVER_URL}/api/room/{self.room_code}"
+            try:
+                check_response = requests.get(check_url, timeout=10)
+                if check_response.status_code == 404:
+                    logger.error(f"Room {self.room_code} not found")
+                    self.show_error_dialog(
+                        "Room Not Found",
+                        f"Room '{self.room_code}' does not exist.\n\nPlease check:\n- The room code is correct\n- The host has created the room\n- The room hasn't expired"
+                    )
+                    return False
+                elif check_response.status_code != 200:
+                    result = check_response.json()
+                    if not result.get("success"):
+                        error = result.get("error", "Room not found")
+                        logger.error(f"Room check failed: {error}")
+                        self.show_error_dialog(
+                            "Room Not Found",
+                            f"Room '{self.room_code}' not found:\n\n{error}"
+                        )
+                        return False
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Could not verify room existence: {e}")
+                # Continue anyway - the join request will fail if room doesn't exist
+
+            # Prépare les données
+            payload = {
+                "room_code": self.room_code,
+                "player_name": self.player_name,
+                "mac_address": self.mac_address
+            }
+
+            # Envoie la requête au serveur matchmaking
+            url = f"{config.MATCHMAKING_SERVER_URL}/api/join_room"
+            response = requests.post(url, json=payload, timeout=15)
+
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("success"):
+                    # Obtient l'IP de l'hôte
+                    self.host = result.get("host_ip")
+                    self.port = result.get("host_port", config.SERVER_PORT)
+                    public_ip = result.get("public_ip")
+
+                    # Si l'IP locale ne fonctionne pas, essayer l'IP publique
+                    if not self.host and public_ip:
+                        self.host = public_ip
+
+                    # Mettre à jour le nom du joueur si le serveur l'a modifié
+                    final_name = result.get("player_name")
+                    if final_name and final_name != self.player_name:
+                        logger.info(f"Player name changed from '{self.player_name}' to '{final_name}' (name already in use)")
+                        self.player_name = final_name
+
+                    logger.info(f"✅ Room found!")
+                    logger.info(f"📍 Host IP: {self.host}:{self.port}")
+                    logger.info(f"👥 Players: {result.get('players', [])}")
+
+                    print(f"✅ Room found!")
+                    print(f"📍 Connecting to host at {self.host}:{self.port}...")
+
+                    return True
+                else:
+                    error = result.get("error", "Unknown error")
+                    logger.error(f"Failed to join room: {error}")
+                    self.show_error_dialog(
+                        "Cannot Join Room",
+                        f"Failed to join room '{self.room_code}':\n\n{error}\n\nPlease check the room code and try again."
+                    )
+                    return False
+            elif response.status_code == 400:
+                result = response.json()
+                error = result.get("error", "Invalid request")
+                logger.error(f"Bad request: {error}")
+                self.show_error_dialog(
+                    "Cannot Join Room",
+                    f"Cannot join room '{self.room_code}':\n\n{error}"
+                )
+                return False
+            elif response.status_code == 404:
+                logger.error(f"Room {self.room_code} not found")
+                self.show_error_dialog(
+                    "Room Not Found",
+                    f"Room '{self.room_code}' does not exist.\n\nPlease verify the room code with the host."
+                )
+                return False
+            else:
+                logger.error(f"Matchmaking server returned status {response.status_code}")
+                self.show_error_dialog(
+                    "Server Error",
+                    f"Matchmaking server error: {response.status_code}\n\nPlease try again later."
+                )
+                return False
+
+        except requests.exceptions.Timeout:
+            logger.error("Timeout connecting to matchmaking server")
+            self.show_error_dialog(
+                "Connection Timeout",
+                "Matchmaking server is not responding.\n\nPlease check your internet connection."
+            )
+            return False
+        except requests.exceptions.ConnectionError:
+            logger.error("Cannot reach matchmaking server")
+            self.show_error_dialog(
+                "Connection Error",
+                "Cannot reach matchmaking server.\n\nMake sure the matchmaking server is running:\npython matchmaking_server.py"
+            )
+            return False
+        except Exception as e:
+            logger.error(f"Error joining room: {e}")
+            self.show_error_dialog(
+                "Error",
+                f"An error occurred:\n\n{str(e)}"
+            )
+            return False
+
     def connect(self):
         """Connect to server with timeout and detailed error messages"""
         try:
+            logger.info(f"Connecting to {self.host}:{self.port}...")
             print(f"🔗 Attempting to connect to {self.host}:{self.port}...")
-            
+
             # Create socket
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            
+
             # Set connection timeout (10 seconds)
             self.socket.settimeout(10.0)
-            
+
             # Try to connect
             self.socket.connect((self.host, self.port))
-            
+
             # Connection successful - remove timeout for normal operation
             self.socket.settimeout(None)
-            
+
             self.connected = True
             self.running = True
+
+            logger.info(f"✅ Connected to server at {self.host}:{self.port}")
             print(f"✅ Connected to server at {self.host}:{self.port}")
-            
+
             return True
-            
+
         except socket.timeout:
-            error_msg = f"❌ Connection timeout: Server at {self.host}:{self.port} did not respond.\nPlease check:\n- Server is running\n- IP address is correct\n- Firewall allows connection"
-            print(error_msg)
+            error_msg = f"Connection timeout: Server at {self.host}:{self.port} did not respond.\n\nPlease check:\n- Server is running\n- IP address is correct\n- Firewall allows connection"
+            logger.error(error_msg)
+            print(f"❌ {error_msg}")
             self.show_error_dialog("Connection Timeout", error_msg)
+            self.connection_errors.append(error_msg)
             return False
-            
+
         except socket.gaierror:
-            error_msg = f"❌ Invalid address: Could not resolve hostname '{self.host}'.\nPlease check that the IP address is correct."
-            print(error_msg)
+            error_msg = f"Invalid address: Could not resolve hostname '{self.host}'.\n\nPlease check that the IP address is correct."
+            logger.error(error_msg)
+            print(f"❌ {error_msg}")
             self.show_error_dialog("Invalid Address", error_msg)
+            self.connection_errors.append(error_msg)
             return False
-            
+
         except ConnectionRefusedError:
-            error_msg = f"❌ Connection refused: Server at {self.host}:{self.port} refused connection.\nPlease check:\n- Server is running\n- Port {self.port} is correct\n- Firewall allows connection"
-            print(error_msg)
+            error_msg = f"Connection refused: Server at {self.host}:{self.port} refused connection.\n\nPlease check:\n- Server is running\n- Port {self.port} is correct\n- Firewall allows connection"
+            logger.error(error_msg)
+            print(f"❌ {error_msg}")
             self.show_error_dialog("Connection Refused", error_msg)
+            self.connection_errors.append(error_msg)
             return False
-            
+
         except Exception as e:
-            error_msg = f"❌ Connection failed: {str(e)}\n\nPlease verify:\n- Server is running\n- IP address and port are correct\n- Network connection is working"
-            print(error_msg)
+            error_msg = f"Connection failed: {str(e)}\n\nPlease verify:\n- Server is running\n- IP address and port are correct\n- Network connection is working"
+            logger.error(error_msg)
+            print(f"❌ {error_msg}")
             self.show_error_dialog("Connection Error", error_msg)
+            self.connection_errors.append(error_msg)
             return False
     
     def start_game(self):
@@ -286,13 +497,19 @@ class GameClient:
     
     def handle_welcome(self, data):
         """Handle welcome message
-        
+
         Args:
             data (dict): Welcome data
         """
         self.player_id = data.get('player_id')
+        room_code = data.get('room_code')
+
+        logger.info(f"Welcome message received - Player {self.player_id}")
         print(f"🎮 Welcome! You are Player {self.player_id}")
-        
+
+        if room_code:
+            print(f"🏠 Room: {room_code}")
+
         if self.game_loop:
             self.game_loop.game_state = config.STATE_WAITING
     
@@ -331,13 +548,18 @@ class GameClient:
     
     def disconnect(self):
         """Disconnect from server"""
+        logger.info("Disconnecting from server...")
         self.running = False
         self.connected = False
-        
+
         if self.socket:
-            self.socket.close()
-        
+            try:
+                self.socket.close()
+            except:
+                pass
+
         print("👋 Disconnected from server")
+        logger.info("Disconnected successfully")
     
     def show_error_dialog(self, title, message):
         """Store error message for display
@@ -372,35 +594,54 @@ class GameClient:
     def run_with_gui(self):
         """Run the client with GUI (for menu integration)"""
         try:
+            # Teste la connexion d'abord
+            if not self.test_connection():
+                logger.error("Connection test failed")
+                return False
+
+            # Si on utilise un room code, rejoint via matchmaking
+            if self.room_code:
+                if not self.join_room_via_matchmaking():
+                    logger.error("Failed to join room via matchmaking")
+                    return False
+
+            # Vérifie qu'on a bien un host
+            if not self.host:
+                error_msg = "No server address available"
+                logger.error(error_msg)
+                self.show_error_dialog("No Server", error_msg)
+                return False
+
             # Connect to server
             if not self.connect():
+                logger.error("Failed to connect to server")
                 # Connection failed - error dialog will be shown by main.py
                 return False
-            
+
             # Initialize game loop with existing screen
             self.game_loop = GameLoop()
             self.game_loop.is_client = True
             self.game_loop.game_state = config.STATE_CONNECTING
-            
+
             # Start network thread
             network_thread = threading.Thread(target=self.network_loop, daemon=True)
             network_thread.start()
-            
-            # Start input thread  
+
+            # Start input thread
             input_thread = threading.Thread(target=self.input_loop, daemon=True)
             input_thread.start()
-            
+
             # Run game loop in main thread (with GUI)
             self.game_loop.main_loop()
-            
+
             return True
-            
+
         except KeyboardInterrupt:
-            print("\n🛑 Client interrupted by user")
+            logger.info("Client interrupted by user")
             return False
         except Exception as e:
-            error_msg = f"❌ Client error: {str(e)}"
-            print(error_msg)
+            error_msg = f"Client error: {str(e)}"
+            logger.error(error_msg)
             self.show_error_dialog("Client Error", error_msg)
             return False
         finally:

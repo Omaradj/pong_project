@@ -347,7 +347,7 @@ class GameLoop:
 
         """Run 2-player local game with custom win score"""
 
-        print(f"👥 Starting 2-player local game - First to {win_score} wins!")
+        print(f"Starting 2-player local game - First to {win_score} wins!")
 
         self.two_player_local = True
 
@@ -1354,137 +1354,44 @@ class GameLoop:
     
 
     def draw_waiting_screen(self, surface):
-
         """Draw waiting for players screen with animation
 
-        
-
         Args:
-
             surface (pygame.Surface): Surface to draw on
-
         """
-
         import math
 
-        
-
         # Animated title
-
         font = pygame.font.Font(None, 48)
-
-        wait_text = "Waiting for Players..."
-
-        
+        wait_text = "Waiting for Players"
 
         # Pulsing effect
-
         pulse = 0.8 + 0.2 * math.sin(time.time() * 3)
-
         color = (
-
             int(config.NEON_BLUE[0] * pulse),
-
             int(config.NEON_BLUE[1] * pulse),
-
             int(config.NEON_BLUE[2] * pulse)
-
         )
-
-        
 
         wait_surface = font.render(wait_text, True, color)
-
-        wait_rect = wait_surface.get_rect(center=(config.WINDOW_WIDTH // 2, config.WINDOW_HEIGHT // 2 - 60))
-
+        wait_rect = wait_surface.get_rect(center=(config.WINDOW_WIDTH // 2, config.WINDOW_HEIGHT // 2 - 40))
         surface.blit(wait_surface, wait_rect)
 
-        
-
         # Animated dots
-
         dots_count = int((time.time() * 2) % 4)
-
         dots_text = "." * dots_count
-
         dots_surface = font.render(dots_text, True, color)
-
         dots_rect = dots_surface.get_rect(
-
             topleft=(wait_rect.right + 5, wait_rect.top)
-
         )
-
         surface.blit(dots_surface, dots_rect)
 
-        
-
-        # Server info box
-
-        font_medium = pygame.font.Font(None, 28)
-
-        font_small = pygame.font.Font(None, 24)
-
-        
-
-        info_lines = [
-
-            "🌐 Server Information:",
-
-            f"Port: {config.SERVER_PORT}",
-
-            "",
-
-            "📋 Instructions:",
-
-            "1. Share your PUBLIC IP with other players",
-
-            "2. Find your IP at: www.whatismyip.com",
-
-            "3. Other player should select 'Join Game'",
-
-            "   and enter your IP address",
-
-            "",
-
-            "⏳ Waiting for opponent to connect..."
-
-        ]
-
-        
-
-        y_offset = config.WINDOW_HEIGHT // 2 + 20
-
-        for i, line in enumerate(info_lines):
-
-            if i == 0 or i == 3:  # Headers
-
-                text_surface = font_medium.render(line, True, config.NEON_YELLOW)
-
-            else:
-
-                text_surface = font_small.render(line, True, config.WHITE)
-
-            
-
-            text_rect = text_surface.get_rect(center=(config.WINDOW_WIDTH // 2, y_offset))
-
-            surface.blit(text_surface, text_rect)
-
-            y_offset += 30 if i == 0 or i == 3 else 25
-
-        
-
         # Press ESC to cancel hint
-
+        font_small = pygame.font.Font(None, 24)
         hint_surface = font_small.render("Press ESC or Q to return to menu", True, config.GRAY)
-
         hint_rect = hint_surface.get_rect(
-
             center=(config.WINDOW_WIDTH // 2, config.WINDOW_HEIGHT - 30)
-
         )
-
         surface.blit(hint_surface, hint_rect)
 
     
