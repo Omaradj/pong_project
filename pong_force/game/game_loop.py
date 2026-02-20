@@ -417,7 +417,16 @@ class GameLoop:
 
             self.update(dt)
 
-            
+            # Broadcast game state to clients if server (at network update rate)
+            if self.is_server and hasattr(self, 'server'):
+                # Broadcast at network update rate (60 times per second)
+                if not hasattr(self, '_last_broadcast_time'):
+                    self._last_broadcast_time = current_time
+                    self._broadcast_interval = 1.0 / config.NETWORK_UPDATE_RATE
+                
+                if current_time - self._last_broadcast_time >= self._broadcast_interval:
+                    self.server.broadcast_game_state()
+                    self._last_broadcast_time = current_time
 
             # Render
 
@@ -653,29 +662,45 @@ class GameLoop:
 
         
 
-        # Update input
+        # Update input (only for host/server, not for client)
+        # Client receives game state from server, so it doesn't process input locally
 
-        if not self.score_delay_active:
+        if not self.score_delay_active and not self.is_client:
 
             self.update_input()
 
         
 
         # Update game objects
+        # Client receives state from server, so it doesn't simulate gameplay
+        # Only server/host simulates the game
 
-        if self.game_state == config.STATE_PLAYING and not self.score_delay_active:
+        if self.game_state == config.STATE_PLAYING and not self.score_delay_active and not self.is_client:
 
             self.update_gameplay(dt)
 
         
 
-        # Update effects
+        # Update effects (always update, even for client)
 
         self.effects.update(dt)
 
         self.force_push.update(dt)
 
         
+
+        # Update paddles visually (for effects like glow, trail) even if client
+        # Position comes from server, but visual effects need updating
+        if self.game_state == config.STATE_PLAYING and self.is_client:
+            # Client: only update visual effects, not movement (position comes from server)
+            # Update visual effects without modifying position
+            self.paddle1.update_visual_effects(dt)
+            self.paddle2.update_visual_effects(dt)
+            # Update collision rectangles for rendering
+            self.paddle1.rect.x = self.paddle1.x
+            self.paddle1.rect.y = self.paddle1.y
+            self.paddle2.rect.x = self.paddle2.x
+            self.paddle2.rect.y = self.paddle2.y
 
         # Update scoreboard
 

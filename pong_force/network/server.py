@@ -267,7 +267,7 @@ class GameServer:
         self.game_thread = None
     
     def run_game_loop(self):
-        """Run the game loop (in separate thread)"""
+        """Run the game loop (in separate thread) - DEPRECATED, use run_game_loop_main instead"""
         last_time = time.time()
         
         while self.running:
@@ -283,6 +283,7 @@ class GameServer:
             
             # Cap update rate
             time.sleep(1.0 / self.update_rate)
+    
     
     def accept_connections(self):
         """Accept client connections"""
@@ -568,6 +569,9 @@ class GameServer:
             accept_thread = threading.Thread(target=self.accept_connections_gui, daemon=True)
             accept_thread.start()
 
+            # Store reference to server in game_loop for broadcasting
+            self.game_loop.server = self
+            
             # Run the game loop in main thread (with GUI)
             self.game_loop.main_loop()
 
@@ -619,11 +623,7 @@ class GameServer:
                     # Start game if we have enough players
                     if len(self.clients) == self.max_clients:
                         self.start_game_session()
-                        
-                        # Start game update thread now
-                        if not self.game_thread:
-                            self.game_thread = threading.Thread(target=self.run_game_loop, daemon=True)
-                            self.game_thread.start()
+                        # Game loop runs in main thread, no separate thread needed
                 
                 except socket.timeout:
                     # Timeout is normal, just continue
