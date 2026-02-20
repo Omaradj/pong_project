@@ -530,6 +530,58 @@ class GameServer:
         except Exception as e:
             logger.debug(f"Failed to poll relay inputs: {e}")
     
+    def relay_polling_loop(self):
+        """Boucle de polling des inputs depuis le relais"""
+        import time
+        last_poll_time = 0
+        poll_interval = 1.0 / self.update_rate  # 60 fois par seconde
+        
+        while self.running:
+            try:
+                current_time = time.time()
+                
+                # Poller les inputs depuis le relais
+                if current_time - last_poll_time >= poll_interval:
+                    self.poll_relay_inputs()
+                    last_poll_time = current_time
+                
+                time.sleep(0.01)  # Petit sleep pour éviter de surcharger le CPU
+                
+            except Exception as e:
+                if self.running:
+                    logger.error(f"Relay polling loop error: {e}")
+                break
+    
+    def wait_for_client_join(self):
+        """Attend que le client rejoigne via le matchmaking server"""
+        import time
+        
+        while self.running:
+            try:
+                # Vérifier si un client a rejoint la room
+                url = f"{config.MATCHMAKING_SERVER_URL}/api/room/{self.room_code}"
+                response = requests.get(url, timeout=5)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if result.get("success"):
+                        room = result.get("room", {})
+                        players = room.get("players", [])
+                        
+                        # Si on a 2 joueurs, démarrer le jeu
+                        if len(players) >= 2 and self.game_loop.game_state == config.STATE_WAITING:
+                            logger.info(f"Client joined! Starting game with {len(players)} players")
+                            print(f"✅ Client joined! Starting game...")
+                            self.start_game_session()
+                            break
+                
+                time.sleep(1)  # Vérifier toutes les secondes
+                
+            except Exception as e:
+                if self.running:
+                    logger.debug(f"Error checking for client join: {e}")
+                time.sleep(1)
+    
     def handle_input_from_relay(self, input_data):
         """Traite un input reçu depuis le relais"""
         # Créer un client handler virtuel pour traiter les inputs
@@ -595,52 +647,77 @@ class GameServer:
                 if not self.register_with_matchmaking():
                     logger.error(f"Failed to register with matchmaking: {self.last_error}")
                     return False
-
-            # Create socket
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-            try:
-                self.socket.bind((self.host, self.port))
-            except OSError as e:
-                if e.errno == 10048:  # Port already in use on Windows
-                    logger.error(f"Port {self.port} is already in use!")
-                    self.last_error = f"Port {self.port} already in use"
-                    return False
-                else:
-                    raise
-
-            self.socket.listen(self.max_clients)
-            self.running = True
-
-            logger.info(f"Server started on {self.host}:{self.port}")
-            print(f"\n{'='*60}")
-            print(f"✅ SERVER STARTED!")
-
-            if self.room_code:
+                
+                # Mode relais : pas besoin de socket, on utilise le matchmaking server
+                self.running = True
+                logger.info(f"Server started in relay mode (room: {self.room_code})")
+                print(f"\n{'='*60}")
+                print(f"✅ SERVER STARTED (RELAY MODE)!")
                 print(f"🎮 Room Code: {self.room_code}")
                 print(f"📍 Your public IP: {self.public_ip}")
                 print(f"💡 Share room code '{self.room_code}' with your opponent!")
+                print(f"🔗 Using relay mode - no port forwarding needed!")
+                print(f"⏳ Waiting for opponent to join...")
+                print(f"{'='*60}\n")
+
+                # Start game loop
+                self.start_game()
+
+                # Start relay polling thread (pour recevoir les inputs du client)
+                relay_thread = threading.Thread(target=self.relay_polling_loop, daemon=True)
+                relay_thread.start()
+
+                # Start waiting for client to join via matchmaking
+                wait_thread = threading.Thread(target=self.wait_for_client_join, daemon=True)
+                wait_thread.start()
+
+                # Store reference to server in game_loop for broadcasting
+                self.game_loop.server = self
+                
+                # Run the game loop in main thread (with GUI)
+                self.game_loop.main_loop()
+
+                return True
             else:
+                # Mode direct : connexion socket classique
+                # Create socket
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+                try:
+                    self.socket.bind((self.host, self.port))
+                except OSError as e:
+                    if e.errno == 10048:  # Port already in use on Windows
+                        logger.error(f"Port {self.port} is already in use!")
+                        self.last_error = f"Port {self.port} already in use"
+                        return False
+                    else:
+                        raise
+
+                self.socket.listen(self.max_clients)
+                self.running = True
+
+                logger.info(f"Server started on {self.host}:{self.port}")
+                print(f"\n{'='*60}")
+                print(f"✅ SERVER STARTED!")
                 print(f"📍 Listening on {self.host}:{self.port}")
+                print(f"⏳ Waiting for opponent...")
+                print(f"{'='*60}\n")
 
-            print(f"⏳ Waiting for opponent...")
-            print(f"{'='*60}\n")
+                # Start game loop
+                self.start_game()
 
-            # Start game loop
-            self.start_game()
+                # Start accepting connections in background thread
+                accept_thread = threading.Thread(target=self.accept_connections_gui, daemon=True)
+                accept_thread.start()
 
-            # Start accepting connections in background thread
-            accept_thread = threading.Thread(target=self.accept_connections_gui, daemon=True)
-            accept_thread.start()
+                # Store reference to server in game_loop for broadcasting
+                self.game_loop.server = self
+                
+                # Run the game loop in main thread (with GUI)
+                self.game_loop.main_loop()
 
-            # Store reference to server in game_loop for broadcasting
-            self.game_loop.server = self
-            
-            # Run the game loop in main thread (with GUI)
-            self.game_loop.main_loop()
-
-            return True
+                return True
 
         except KeyboardInterrupt:
             logger.info("Server interrupted by user")

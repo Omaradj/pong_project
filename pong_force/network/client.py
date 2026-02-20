@@ -260,8 +260,8 @@ class GameClient:
             )
             return False
 
-     def connect(self):
-         """Connect to server with timeout and detailed error messages"""
+    def connect(self):
+        """Connect to server with timeout and detailed error messages"""
          # Si on utilise le relais (room_code), pas besoin de connexion socket
          if self.room_code:
              logger.info(f"Using relay mode (room: {self.room_code}) - no direct connection needed")
@@ -694,7 +694,19 @@ class GameClient:
             data (dict): Game state data
         """
         if self.game_loop:
+            # Si on n'a pas encore de player_id, on est player 2 (client)
+            if self.player_id is None:
+                self.player_id = 2
+                logger.info(f"Client initialized as Player {self.player_id} (relay mode)")
+            
+            # Mettre à jour l'état du jeu
             self.game_loop.set_game_state(data)
+            
+            # Si l'état du jeu indique que le jeu a commencé et qu'on était en attente, mettre à jour
+            game_state = data.get('game_state', config.STATE_WAITING)
+            if game_state == config.STATE_PLAYING and self.game_loop.game_state == config.STATE_WAITING:
+                logger.info("Game started via relay!")
+                print("🎮 Game starting!")
     
     def handle_host_disconnected(self, data):
         """Handle host disconnection

@@ -426,8 +426,7 @@ class GameLoop:
                 
                 if current_time - self._last_broadcast_time >= self._broadcast_interval:
                     self.server.broadcast_game_state()
-                    # Poll relay inputs (si utilisation du relais)
-                    self.server.poll_relay_inputs()
+                    # Note: relay inputs are polled in a separate thread (relay_polling_loop)
                     self._last_broadcast_time = current_time
 
             # Render
