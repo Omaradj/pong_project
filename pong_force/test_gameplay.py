@@ -183,12 +183,23 @@ def test_multiplayer_host(room_result):
         print(f"\n🎮 Hosting room with code: {room_result['code']}")
         print(f"👤 Player: {room_result['name']}")
 
-        # Démarre le serveur avec room code et nom de joueur
+        # Demander au host de choisir le nombre de buts
+        goal_menu = GoalSelectionMenu()
+        win_score = goal_menu.run()
+        
+        if win_score <= 0:  # User cancelled
+            print("[FAIL] User cancelled goal selection")
+            return False
+
+        print(f"🎯 Win score: {win_score}")
+
+        # Démarre le serveur avec room code, nom de joueur et score de victoire
         server = GameServer(
             host=config.SERVER_IP,
             port=config.SERVER_PORT,
             room_code=room_result['code'],
-            player_name=room_result['name']
+            player_name=room_result['name'],
+            win_score=win_score
         )
 
         print(f"\n✅ Server initialized")

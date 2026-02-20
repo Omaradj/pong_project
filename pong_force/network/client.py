@@ -326,17 +326,40 @@ class GameClient:
         """Network communication loop"""
         while self.running and self.connected:
             try:
+                # Set timeout to allow checking self.running periodically
+                if self.socket:
+                    self.socket.settimeout(1.0)
+                
                 # Receive message
                 data = self.socket.recv(self.buffer_size)
                 if not data:
+                    # Server closed connection
+                    logger.warning("Server closed connection")
+                    print("❌ Server closed connection")
+                    if self.game_loop:
+                        self.game_loop.game_state = config.STATE_GAME_OVER
+                    self.show_error_dialog("Connection Lost", "Server closed the connection.")
                     break
                 
                 # Parse message
                 message = json.loads(data.decode('utf-8'))
                 self.handle_message(message)
                 
+            except socket.timeout:
+                # Timeout is normal, just continue
+                continue
+            except (ConnectionResetError, ConnectionAbortedError, OSError) as e:
+                # Server disconnected
+                if self.running:
+                    logger.warning(f"Server disconnected: {e}")
+                    print(f"❌ Server disconnected: {e}")
+                    if self.game_loop:
+                        self.game_loop.game_state = config.STATE_GAME_OVER
+                    self.show_error_dialog("Connection Lost", "Lost connection to server.")
+                break
             except Exception as e:
                 if self.running:
+                    logger.error(f"Network error: {e}")
                     print(f"❌ Network error: {e}")
                 break
         
@@ -492,6 +515,10 @@ class GameClient:
             self.handle_game_start(data)
         elif message_type == 'game_state':
             self.handle_game_state(data)
+        elif message_type == 'host_disconnected':
+            self.handle_host_disconnected(data)
+        elif message_type == 'player_disconnected':
+            self.handle_player_disconnected(data)
         else:
             print(f"❌ Unknown message type: {message_type}")
     
@@ -503,15 +530,21 @@ class GameClient:
         """
         self.player_id = data.get('player_id')
         room_code = data.get('room_code')
+        win_score = data.get('win_score', config.WIN_SCORE)
 
         logger.info(f"Welcome message received - Player {self.player_id}")
         print(f"🎮 Welcome! You are Player {self.player_id}")
+        print(f"🎯 Win score: {win_score}")
 
         if room_code:
             print(f"🏠 Room: {room_code}")
 
         if self.game_loop:
             self.game_loop.game_state = config.STATE_WAITING
+            # Set custom win score
+            self.game_loop.custom_win_score = win_score
+            if hasattr(self.game_loop, 'scoreboard'):
+                self.game_loop.scoreboard.win_score = win_score
     
     def handle_game_start(self, data):
         """Handle game start message
@@ -520,6 +553,12 @@ class GameClient:
             data (dict): Game start data
         """
         print("🎮 Game starting!")
+        
+        win_score = data.get('win_score', config.WIN_SCORE)
+        if win_score and self.game_loop:
+            self.game_loop.custom_win_score = win_score
+            if hasattr(self.game_loop, 'scoreboard'):
+                self.game_loop.scoreboard.win_score = win_score
         
         if self.game_loop:
             self.game_loop.game_state = config.STATE_PLAYING
@@ -532,6 +571,39 @@ class GameClient:
         """
         if self.game_loop:
             self.game_loop.set_game_state(data)
+    
+    def handle_host_disconnected(self, data):
+        """Handle host disconnection
+        
+        Args:
+            data (dict): Disconnect data
+        """
+        message = data.get('message', 'Host disconnected')
+        logger.warning(f"Host disconnected: {message}")
+        print(f"❌ {message}")
+        
+        if self.game_loop:
+            self.game_loop.game_state = config.STATE_GAME_OVER
+        
+        # Show error dialog
+        self.show_error_dialog("Host Disconnected", message)
+        
+        # Disconnect from server
+        self.running = False
+        self.disconnect()
+    
+    def handle_player_disconnected(self, data):
+        """Handle other player disconnection
+        
+        Args:
+            data (dict): Disconnect data
+        """
+        message = data.get('message', 'Player disconnected')
+        logger.info(f"Player disconnected: {message}")
+        print(f"⚠️ {message}")
+        
+        if self.game_loop:
+            self.game_loop.game_state = config.STATE_WAITING
     
     def send_message(self, message):
         """Send message to server

@@ -111,15 +111,25 @@ def main_game():
                             error_dialog.run()
                             continue
 
+                        # Demander au host de choisir le nombre de buts
+                        from game.menu import GoalSelectionMenu
+                        goal_menu = GoalSelectionMenu()
+                        win_score = goal_menu.run()
+                        
+                        if win_score <= 0:  # User cancelled
+                            continue
+
                         print(f"🎮 Hosting room with code: {room_code}")
                         print(f"👤 Player: {player_name}")
+                        print(f"🎯 Win score: {win_score}")
 
-                        # Démarre le serveur avec room code et nom de joueur
+                        # Démarre le serveur avec room code, nom de joueur et score de victoire
                         server = GameServer(
                             host=config.SERVER_IP,
                             port=config.SERVER_PORT,
                             room_code=room_code,
-                            player_name=player_name
+                            player_name=player_name,
+                            win_score=win_score
                         )
 
                         # Lance le serveur avec GUI

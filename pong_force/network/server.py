@@ -24,7 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class GameServer:
-    def __init__(self, host, port, room_code=None, player_name=None):
+    def __init__(self, host, port, room_code=None, player_name=None, win_score=None):
         """Initialize the game server
 
         Args:
@@ -32,6 +32,7 @@ class GameServer:
             port (int): Server port
             room_code (str): Room code for matchmaking
             player_name (str): Host player name
+            win_score (int): Number of goals needed to win (default: config.WIN_SCORE)
         """
         self.host = host
         self.port = port
@@ -42,6 +43,7 @@ class GameServer:
         # Room information
         self.room_code = room_code
         self.player_name = player_name or "Host"
+        self.win_score = win_score or config.WIN_SCORE
         self.registered_with_matchmaking = False
 
         # Network info
@@ -253,6 +255,11 @@ class GameServer:
         self.game_loop.is_server = True
         self.game_loop.game_state = config.STATE_WAITING
         
+        # Set custom win score
+        self.game_loop.custom_win_score = self.win_score
+        if hasattr(self.game_loop, 'scoreboard'):
+            self.game_loop.scoreboard.win_score = self.win_score
+        
         # Don't start game thread yet - will be started in run_with_gui()
         self.game_thread = None
     
@@ -317,11 +324,12 @@ class GameServer:
         # Met à jour le statut de la room
         self.update_room_status("in_progress")
 
-        # Send game start message to all clients
+        # Send game start message to all clients with win score
         message = {
             'type': 'game_start',
             'data': {
-                'message': 'Game starting!'
+                'message': 'Game starting!',
+                'win_score': self.win_score
             }
         }
         self.broadcast_message(message)
@@ -336,12 +344,13 @@ class GameServer:
         logger.info(f"Client {client.address} connected as Player {client.player_id}")
         print(f"✅ Player {client.player_id} connected from {client.address}")
 
-        # Send welcome message
+        # Send welcome message with win score
         welcome_message = {
             'type': 'welcome',
             'data': {
                 'player_id': client.player_id,
                 'room_code': self.room_code,
+                'win_score': self.win_score,
                 'message': f'Welcome to Pong Force! You are Player {client.player_id}'
             }
         }
@@ -359,20 +368,27 @@ class GameServer:
         if client in self.clients:
             self.clients.remove(client)
         
-        # Pause game if not enough players
+        # If host disconnects, notify all clients and stop server
         if len(self.clients) < self.max_clients:
-            self.game_loop.game_state = config.STATE_WAITING
-            print(f"⏸️ Game paused - waiting for more players ({len(self.clients)}/{self.max_clients})")
-            
-            # Notify remaining clients
+            # Notify remaining clients that host disconnected
             if self.clients:
                 message = {
-                    'type': 'player_disconnected',
+                    'type': 'host_disconnected',
                     'data': {
-                        'message': f'Player {client.player_id} disconnected. Waiting for new player...'
+                        'message': 'Host disconnected. Game ending...'
                     }
                 }
                 self.broadcast_message(message)
+            
+            # Stop the server
+            self.game_loop.game_state = config.STATE_GAME_OVER
+            print(f"⏸️ Game ended - not enough players ({len(self.clients)}/{self.max_clients})")
+            
+            # Close room on matchmaking server
+            self.close_room()
+            
+            # Stop accepting connections
+            self.running = False
     
     def handle_input(self, client, data):
         """Handle client input
