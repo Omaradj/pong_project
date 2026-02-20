@@ -365,7 +365,8 @@ class GameClient:
         """Boucle de communication via le relais (matchmaking server)"""
         import time
         last_poll_time = 0
-        poll_interval = 1.0 / config.NETWORK_UPDATE_RATE  # 60 fois par seconde
+        # Réduire la fréquence de polling à 30 Hz pour améliorer les performances
+        poll_interval = 1.0 / 30  # 30 fois par seconde (suffisant pour le jeu)
         
         while self.running:
             try:
@@ -376,7 +377,8 @@ class GameClient:
                     self.poll_relay_game_state()
                     last_poll_time = current_time
                 
-                time.sleep(0.01)  # Petit sleep pour éviter de surcharger le CPU
+                # Sleep plus long pour réduire la charge CPU
+                time.sleep(0.02)  # 20ms entre les polls
                 
             except Exception as e:
                 if self.running:
@@ -435,7 +437,8 @@ class GameClient:
         
         try:
             url = f"{config.MATCHMAKING_SERVER_URL}/api/relay/game_state/{self.room_code}"
-            response = requests.get(url, timeout=1)
+            # Timeout très court pour éviter de bloquer le thread principal
+            response = requests.get(url, timeout=0.1)
             
             if response.status_code == 200:
                 result = response.json()
@@ -446,6 +449,9 @@ class GameClient:
             elif response.status_code == 404:
                 # Pas encore d'état disponible, c'est normal au début
                 pass
+        except requests.exceptions.Timeout:
+            # Timeout normal, ignorer silencieusement
+            pass
         except Exception as e:
             logger.debug(f"Failed to poll relay game state: {e}")
     
@@ -460,7 +466,11 @@ class GameClient:
                 "room_code": self.room_code,
                 "input": input_data
             }
-            requests.post(url, json=payload, timeout=1)
+            # Timeout très court pour éviter de bloquer le thread principal
+            requests.post(url, json=payload, timeout=0.1)
+        except requests.exceptions.Timeout:
+            # Timeout normal, ignorer silencieusement
+            pass
         except Exception as e:
             logger.debug(f"Failed to send input to relay: {e}")
     
@@ -468,13 +478,15 @@ class GameClient:
         """Input handling loop"""
         while self.running:
             try:
-                # Process input queue
-                if self.input_queue and time.time() - self.last_input_time >= self.input_throttle:
+                # Process input queue - envoyer immédiatement pour une meilleure réactivité
+                if self.input_queue:
                     input_data = self.input_queue.pop(0)
                     self.send_input(input_data)
                     self.last_input_time = time.time()
-                
-                time.sleep(0.01)  # Small delay to prevent busy waiting
+                    # Ne pas throttler trop pour une meilleure réactivité
+                    time.sleep(0.005)  # 5ms entre les inputs
+                else:
+                    time.sleep(0.01)  # Small delay to prevent busy waiting
                 
             except Exception as e:
                 if self.running:

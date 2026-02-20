@@ -500,9 +500,13 @@ class GameServer:
                     "room_code": self.room_code,
                     "game_state": game_state
                 }
-                requests.post(url, json=payload, timeout=2)
+                # Timeout très court pour éviter de bloquer le thread principal
+                requests.post(url, json=payload, timeout=0.1)
+            except requests.exceptions.Timeout:
+                # Timeout normal, ignorer silencieusement
+                pass
             except Exception as e:
-                logger.warning(f"Failed to send game state to relay: {e}")
+                logger.debug(f"Failed to send game state to relay: {e}")
         
         # Aussi broadcaster directement aux clients connectés (fallback)
         message = {
@@ -518,7 +522,8 @@ class GameServer:
         
         try:
             url = f"{config.MATCHMAKING_SERVER_URL}/api/relay/input/{self.room_code}"
-            response = requests.get(url, timeout=1)
+            # Timeout très court pour éviter de bloquer le thread principal
+            response = requests.get(url, timeout=0.1)
             
             if response.status_code == 200:
                 result = response.json()
@@ -527,6 +532,9 @@ class GameServer:
                     for input_data in inputs:
                         # Traiter chaque input comme s'il venait d'un client
                         self.handle_input_from_relay(input_data)
+        except requests.exceptions.Timeout:
+            # Timeout normal, ignorer silencieusement
+            pass
         except Exception as e:
             logger.debug(f"Failed to poll relay inputs: {e}")
     
@@ -534,7 +542,8 @@ class GameServer:
         """Boucle de polling des inputs depuis le relais"""
         import time
         last_poll_time = 0
-        poll_interval = 1.0 / self.update_rate  # 60 fois par seconde
+        # Réduire la fréquence de polling à 30 Hz pour améliorer les performances
+        poll_interval = 1.0 / 30  # 30 fois par seconde (suffisant pour les inputs)
         
         while self.running:
             try:
@@ -545,7 +554,8 @@ class GameServer:
                     self.poll_relay_inputs()
                     last_poll_time = current_time
                 
-                time.sleep(0.01)  # Petit sleep pour éviter de surcharger le CPU
+                # Sleep plus long pour réduire la charge CPU
+                time.sleep(0.02)  # 20ms entre les polls
                 
             except Exception as e:
                 if self.running:
@@ -586,8 +596,13 @@ class GameServer:
         """Traite un input reçu depuis le relais"""
         # Créer un client handler virtuel pour traiter les inputs
         # (on n'a pas besoin d'un vrai client socket si on utilise le relais)
-        message_type = input_data.get('message_type') or input_data.get('type')
+        message_type = input_data.get('message_type')
         input_type = input_data.get('type')
+        
+        # Si input_data est directement un dict avec 'type', utiliser directement
+        if isinstance(input_data, dict) and 'type' in input_data:
+            input_type = input_data.get('type')
+            message_type = input_data.get('message_type', config.MSG_INPUT)
         
         # Créer un objet client virtuel
         class VirtualClient:
@@ -596,7 +611,8 @@ class GameServer:
         
         virtual_client = VirtualClient()
         
-        if message_type == config.MSG_INPUT or input_type in ['up', 'down', 'stop']:
+        # Traiter selon le type d'input
+        if message_type == config.MSG_INPUT or (input_type and input_type in ['up', 'down', 'stop']):
             data = {'input': input_type}
             self.handle_input(virtual_client, data)
         elif message_type == config.MSG_FORCE_PUSH or input_type == 'force_push':
